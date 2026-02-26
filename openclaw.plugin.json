@@ -1,0 +1,12 @@
+{
+  "id": "quota-telegram-gate",
+  "name": "Quota Telegram Gate",
+  "version": "0.1.0",
+  "description": "Quota gate for Telegram webhooks",
+  "main": "./dist/index.js",
+  "configSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}
