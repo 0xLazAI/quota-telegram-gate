@@ -3,8 +3,16 @@ import { QuotaOptions, UserQuotaState } from './types.js'
 import { QuotaDatabase } from './db.js'
 import { appendFileSync } from "node:fs";
 import { join } from "path";
+import { mkdirSync } from 'node:fs'
 
-const DEFAULT_DATABASE = new URL('../../quota.db', import.meta.url).pathname
+const dataDir =
+  process.env.QUOTA_DATA_DIR ||
+  join(process.env.HOME || '/tmp', '.openclaw', 'quota');
+
+mkdirSync(dataDir, { recursive: true })
+
+const DEFAULT_DATABASE = process.env.QUOTA_DB_PATH || join(dataDir, 'quota.db')
+
 const CONFIG_DEFAULT_LIMIT = typeof configFile.defaultLimit === 'number' ? configFile.defaultLimit : 10
 const CONFIG_ADMINS: string[] = Array.isArray(configFile.admins) ? configFile.admins : []
 const logPath = join(
