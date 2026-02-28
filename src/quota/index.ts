@@ -58,12 +58,12 @@ export class QuotaService {
   }
 
   async consume(userId: string): Promise<CheckResult> {
-
+    console.log(`[${new Date().toISOString()}] consume user=${userId}\n`)
     
-    appendFileSync(
-      logPath,
-      `[${new Date().toISOString()}] consume user=${userId}\n`
-    )    
+    // appendFileSync(
+    //   logPath,
+    //   `[${new Date().toISOString()}] consume user=${userId}\n`
+    // )    
     let result = await this.check(userId)
     if (result.allow) {
       await this.recordUse(userId)
