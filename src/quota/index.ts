@@ -2,12 +2,16 @@ import configFile from './config/quota.config.json' with { type: 'json' }
 import { QuotaOptions, UserQuotaState } from './types.js'
 import { QuotaDatabase } from './db.js'
 import { appendFileSync } from "node:fs";
-
+import { join } from "path";
 
 const DEFAULT_DATABASE = new URL('../quota.db', import.meta.url).pathname
 const CONFIG_DEFAULT_LIMIT = typeof configFile.defaultLimit === 'number' ? configFile.defaultLimit : 10
 const CONFIG_ADMINS: string[] = Array.isArray(configFile.admins) ? configFile.admins : []
-
+const logPath = join(
+  process.env.HOME || "/tmp",
+  ".openclaw",
+  "quota-control1.log"
+);
 export interface CheckResult {
   allow: boolean
   remaining: number
@@ -54,10 +58,13 @@ export class QuotaService {
   }
 
   async consume(userId: string): Promise<CheckResult> {
+
+    
     appendFileSync(
-      `/Users/maozhijian/.openclaw/quota-control1.log`,
+      logPath,
       `[${new Date().toISOString()}] consume user=${userId}\n`
-    );    let result = await this.check(userId)
+    )    
+    let result = await this.check(userId)
     if (result.allow) {
       await this.recordUse(userId)
       result.remaining -= 1
