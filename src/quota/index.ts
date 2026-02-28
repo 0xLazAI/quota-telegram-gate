@@ -4,7 +4,7 @@ import { QuotaDatabase } from './db.js'
 import { appendFileSync } from "node:fs";
 import { join } from "path";
 
-const DEFAULT_DATABASE = new URL('../quota.db', import.meta.url).pathname
+const DEFAULT_DATABASE = new URL('../../quota.db', import.meta.url).pathname
 const CONFIG_DEFAULT_LIMIT = typeof configFile.defaultLimit === 'number' ? configFile.defaultLimit : 10
 const CONFIG_ADMINS: string[] = Array.isArray(configFile.admins) ? configFile.admins : []
 const logPath = join(
