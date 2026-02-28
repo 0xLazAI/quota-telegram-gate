@@ -32,6 +32,7 @@ export class QuotaService {
   private admins: Set<string>
 
   constructor(options: QuotaOptions = {}) {
+    console.log("[quota-telegram-gate] DB_PATH =", DEFAULT_DATABASE);
     this.db = new QuotaDatabase({ path: options.storagePath ?? DEFAULT_DATABASE })
     this.defaultLimit = options.defaultLimit ?? CONFIG_DEFAULT_LIMIT
     const combinedAdmins = options.admins ?? CONFIG_ADMINS
