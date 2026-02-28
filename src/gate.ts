@@ -60,7 +60,7 @@ function extractIds(update: TelegramUpdate): { senderId?: number; chatId?: numbe
     update?.message ??
     update?.edited_message ??
     update?.callback_query?.message;
-
+  console.log("[quota-telegram-gate] message =" + JSON.stringify(update));  
   const senderId: number | undefined = from?.id;
   const chatId: number | undefined = msg?.chat?.id;
   return { senderId, chatId };
