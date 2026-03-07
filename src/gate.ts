@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
 import { CheckResult, QuotaService } from './quota/index.js';
-import { GATE_PORT, TESXT_S } from "./config/constant.js";
+import { GATE_PORT, IGNORE_REPLY_MENTION_BOT_NAME_LIST, TESXT_S } from "./config/constant.js";
 import { authMiddleware } from './infra/authMiddleware.js';
 import { errorHandler } from './infra/errorHandler.js';
 import { currentRequestId, logger, withRequestId } from './infra/logger.js';
@@ -116,12 +116,12 @@ async function handleTelegramWebhook(req: Request, res: Response) {
   }
 
   const { senderId, chatId , messageText, replyToMessageFrom} = extractIds(update);
-  if(MAIN_BOT_USER_NAME == replyToMessageFrom?.username){
+  if(IGNORE_REPLY_MENTION_BOT_NAME_LIST.includes(replyToMessageFrom?.username)){
      const mentionRegex = /@[\p{L}\p{N}_\-\.]+/gu;
      const mentions = messageText?.match(mentionRegex) ?? [];
      const hasMention = mentions.length > 0;
      if(hasMention){
-      console.log("skip response bot:" + replyToMessageFrom?.username);
+      console.log("[quota-telegram-gate]skip response bot:" + replyToMessageFrom?.username);
       return ok(res);
      }
   }

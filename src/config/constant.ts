@@ -13,4 +13,7 @@ export const {
     OPENCLAW_LOCAL_WEBHOOK = "",
     TESXT_S,
     GATE_PORT='19080',
+    IGNORE_REPLY_MENTION_BOT_NAMES,
 } = process.env;
+
+export const IGNORE_REPLY_MENTION_BOT_NAME_LIST = process.env.IGNORE_REPLY_MENTION_BOT_NAMES ? process.env.IGNORE_REPLY_MENTION_BOT_NAMES.split(',').map(String) : [];
