@@ -7,11 +7,17 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "cls-rtracer": "^2.6.3",
     "dotenv": "^17.3.1",
-    "sqlite3": "^5.1.7"
+    "ethers": "^6.16.0",
+    "express": "^4.22.1",
+    "sqlite3": "^5.1.7",
+    "winston": "^3.19.0"
   },
   "devDependencies": {
+    "@types/express": "^4.17.25",
     "@types/node": "^25.3.0",
+    "@types/winston": "^2.4.4",
     "typescript": "^5.5.4"
   },
   "openclaw": {

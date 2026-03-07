@@ -12,5 +12,5 @@ export const {
     TG_BOT_TOKEN,
     OPENCLAW_LOCAL_WEBHOOK = "",
     TESXT_S,
-    
+    GATE_PORT='19080',
 } = process.env;

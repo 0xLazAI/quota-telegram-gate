@@ -1,15 +1,14 @@
-import http, { IncomingMessage, ServerResponse } from "node:http";
-import { spawnSync } from "node:child_process";
+import express, { Request, Response } from 'express';
 import { CheckResult, QuotaService } from './quota/index.js';
-import { TESXT_S } from "./config/constant.js";
+import { GATE_PORT, TESXT_S } from "./config/constant.js";
+import { authMiddleware } from './infra/authMiddleware.js';
+import { errorHandler } from './infra/errorHandler.js';
+import { currentRequestId, logger, withRequestId } from './infra/logger.js';
+import { randomUUID } from 'crypto';
+import { asyncLocalStorage } from './infra/auth.js';
+import { HttpError } from './infra/HttpError.js';
 
 type TelegramUpdate = any; // we only need a few fields, keep lightweight.
-
-type Logger = {
-  info: (m: string) => void;
-  warn: (m: string) => void;
-  error: (m: string) => void;
-};
 
 function env(name: string, fallback?: string): string {
   const v = process.env[name] ?? fallback;
@@ -19,10 +18,6 @@ function env(name: string, fallback?: string): string {
   return v;
 }
 
-const QUOTA_CLI = env(
-  "QUOTA_CLI",
-  "/Users/maozhijian/.openclaw/skills/quota-control/dist/cli.js",
-);
 const TG_BOT_TOKEN = env("TG_BOT_TOKEN","8364053367:AAHN5zWuNy7AA4UJLfyxjWB5d37XnraRjUg");
 const TG_WEBHOOK_SECRET = env("TG_WEBHOOK_SECRET","b4d2c0a10c3f48d18a52f8b1dd85e6e5a0d6d8f4cbe6a13d0b79c5f7f4e3921f");
 const OPENCLAW_LOCAL_WEBHOOK = env(
@@ -30,11 +25,12 @@ const OPENCLAW_LOCAL_WEBHOOK = env(
   "http://127.0.0.1:18787/telegram-webhook",
 );
 const GATE_HOST = process.env.GATE_HOST ?? "0.0.0.0";
-const GATE_PORT = Number(process.env.GATE_PORT ?? "19080");
 const GATE_PATH = process.env.GATE_PATH ?? "/tg/webhook";
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+const MAIN_BOT_USER_NAME = process.env.MAIN_BOT_USER_NAME ?? "";
 const quota = new QuotaService();
 
-function readBody(req: IncomingMessage): Promise<string> {
+function readBody(req: Request): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = "";
     req.on("data", (c: Buffer) => (data += c.toString("utf-8")));
@@ -51,7 +47,7 @@ function safeJsonParse<T>(raw: string): T | null {
   }
 }
 
-function extractIds(update: TelegramUpdate): { senderId?: number; chatId?: number } {
+function extractIds(update: TelegramUpdate): { senderId?: number; chatId?: number ; messageText?:string; replyToMessageFrom?:any} {
   const from =
     update?.message?.from ??
     update?.edited_message?.from ??
@@ -60,37 +56,23 @@ function extractIds(update: TelegramUpdate): { senderId?: number; chatId?: numbe
     update?.message ??
     update?.edited_message ??
     update?.callback_query?.message;
-  console.log("[quota-telegram-gate] message =" + JSON.stringify(update));  
+  console.log("[quota-telegram-gate] message =" + JSON.stringify(update));
   const senderId: number | undefined = from?.id;
   const chatId: number | undefined = msg?.chat?.id;
-  return { senderId, chatId };
+  const messageText : string = msg?.text;
+  const replyToMessage = msg?.reply_to_message;
+  const replyToMessageFrom = replyToMessage?.from;
+  return { senderId, chatId, messageText, replyToMessageFrom};
 }
 
 async function consumeOrDenyLocal(senderId: number): Promise<{ denied: boolean; rawOut: CheckResult }> {
-  const consumeResult =  await quota.consume(String(senderId));
+  const consumeResult = await quota.consume(String(senderId));
   return { denied: !consumeResult.allow, rawOut: consumeResult };
-}
-
-
-function consumeOrDeny(senderId: number): { denied: boolean; rawOut: string } {
-
-  const r = spawnSync(process.execPath, [
-    QUOTA_CLI,
-    "consume",
-    "--user",
-    String(senderId),
-  ], {
-    encoding: "utf-8",
-  });
-
-  const out = (r.stdout ?? "").trim();
-  return { denied: out.startsWith("DENY"), rawOut: out };
 }
 
 async function tgSendMessage(chatId: number, text: string): Promise<void> {
   try {
     const url = `https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`;
-
     const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -107,11 +89,54 @@ async function tgSendMessage(chatId: number, text: string): Promise<void> {
   } catch (err: any) {
     console.error("Fetch failed:", err);
 
-    // 把底层 cause 打印出来（你现在遇到的 ECONNRESET 就在这里）
     if (err?.cause) {
       console.error("Cause:", err.cause);
     }
   }
+}
+
+async function handleTelegramWebhook(req: Request, res: Response) {
+  const secretHeaderRaw = req.headers['x-telegram-bot-api-secret-token'];
+  const secretHeader = typeof secretHeaderRaw === 'string' ? secretHeaderRaw : '';
+
+  if (!secretHeader || secretHeader !== TG_WEBHOOK_SECRET) {
+    return forbidden(res);
+  }
+
+  const rawPayload = Buffer.isBuffer(req.body)
+    ? req.body.toString('utf-8')
+    : typeof req.body === 'string'
+      ? req.body
+      : await readBody(req);
+
+  const update = safeJsonParse<TelegramUpdate>(rawPayload);
+
+  if (!update) {
+    return ok(res);
+  }
+
+  const { senderId, chatId , messageText, replyToMessageFrom} = extractIds(update);
+  if(MAIN_BOT_USER_NAME == replyToMessageFrom?.username){
+     const mentionRegex = /@[\p{L}\p{N}_\-\.]+/gu;
+     const mentions = messageText?.match(mentionRegex) ?? [];
+     const hasMention = mentions.length > 0;
+     if(hasMention){
+      return ok(res);
+     }
+  }
+  if (senderId && chatId) {
+    const { denied } = await consumeOrDenyLocal(senderId);
+    if (denied) {
+      await tgSendMessage(
+        chatId,
+        'Your quota has been used up. Please contact the administrator or complete tasks to get more chances.',
+      );
+      return ok(res);
+    }
+  }
+
+  await forwardToOpenClaw(rawPayload, secretHeader);
+  return ok(res);
 }
 
 async function forwardToOpenClaw(rawBody: string, secretHeader: string): Promise<number> {
@@ -127,67 +152,91 @@ async function forwardToOpenClaw(rawBody: string, secretHeader: string): Promise
   return resp.status;
 }
 
-function ok(res: ServerResponse) {
-  res.writeHead(200, { "content-type": "text/plain" });
-  res.end("ok");
+function ok(res: Response) {
+  res.status(200).type('text/plain').send('ok');
 }
 
-function forbidden(res: ServerResponse) {
-  res.writeHead(403, { "content-type": "text/plain" });
-  res.end("forbidden");
+function forbidden(res: Response) {
+  res.status(403).type('text/plain').send('forbidden');
 }
 
-function notFound(res: ServerResponse) {
-  res.writeHead(404, { "content-type": "text/plain" });
-  res.end("not found");
+function notFound(res: Response) {
+  res.status(404).type('text/plain').send('not found');
 }
 
-const server = http.createServer(async (req: IncomingMessage, res: ServerResponse) => {
-  try {
-    if (req.method !== "POST" || req.url !== GATE_PATH) {
-      return notFound(res);
-    }
+const app = express();
 
-    const secretHeaderRaw = req.headers["x-telegram-bot-api-secret-token"];
-    const secretHeader = typeof secretHeaderRaw === "string" ? secretHeaderRaw : "";
-
-    if (!secretHeader || secretHeader !== TG_WEBHOOK_SECRET) {
-      return forbidden(res);
-    }
-
-    const raw = await readBody(req);
-    const update = safeJsonParse<TelegramUpdate>(raw);
-
-    if (!update) {
+app.post(
+  GATE_PATH,
+  express.raw({ type: '*/*' }),
+  async (req, res) => {
+    try {
+      await handleTelegramWebhook(req, res);
+    } catch (err) {
+      console.error('[quota-telegram-gate] webhook error', err);
       return ok(res);
     }
+  },
+);
 
-    const { senderId, chatId } = extractIds(update);
 
-    if (senderId && chatId) {
-      const { denied } = await consumeOrDenyLocal(senderId);
-      if (denied) {
-        await tgSendMessage(
-          chatId,
-          "Your quota has been used up. Please contact the administrator or complete tasks to get more chances.",
-        );
-        return ok(res);
-      }
-    }
-
-    await forwardToOpenClaw(raw, secretHeader);
-    return ok(res);
-  } catch (err) {
-    console.error("[quota-telegram-gate] error", err);
-    return ok(res);
+app.use(
+  (req, res, next) => {
+      const requestId = req.headers['x-request-id'] as string || randomUUID();
+      res.setHeader('x-request-id', requestId);
+      withRequestId(requestId, () => {
+          const store = {
+              req: req
+          };
+          asyncLocalStorage.run(store, next);
+      });
   }
+);
+app.use(express.json());
+app.use(async (req, res, next) => {
+  const start = Date.now();
+  const { method, originalUrl } = req;
+  const body = req.body && Object.keys(req.body).length ? req.body : undefined;
+  
+  logger.info(`[REQ] ${method} ${originalUrl}`, { body });
+  
+  // 监听响应完成，打印返回
+  res.on('finish', () => {
+  const duration = Date.now() - start;
+  const status = res.statusCode;
+  logger.info(`[RES] ${method} ${originalUrl} ${status} (${duration}ms)`);
+  });
+  
+  next();
+});
+app.use(authMiddleware);
+
+app.post(
+  '/admin/addQuotaLimit',
+  async (req, res, next) => {
+    try {
+      const adminToken = req.headers['at'];
+      console.log("at" + adminToken);
+      if(ADMIN_TOKEN != adminToken){
+         throw new HttpError(403, 'not auth');
+      }
+      await quota.setLimit(null, req.body.targetUserId, req.body.limit);
+      res.json({ data: "success", code: 200 , requestId: currentRequestId()}); 
+    } catch (error) {
+      next(error);
+    }
+  },
+)
+
+app.use((req, res) => {
+  return notFound(res);
+});
+app.use(errorHandler);
+
+app.listen(Number(GATE_PORT), GATE_HOST, () => {
+  console.log(`[quota-telegram-gate] listening http://${GATE_HOST}:${GATE_PORT}${GATE_PATH}`);
+  console.log(`[quota-telegram-gate] forward -> ${OPENCLAW_LOCAL_WEBHOOK}`);
 });
 
-server.listen(GATE_PORT, GATE_HOST, () => {
-  console.log(
-    `[quota-telegram-gate] listening http://${GATE_HOST}:${GATE_PORT}${GATE_PATH}`,
-  );
-  console.log(
-    `[quota-telegram-gate] forward -> ${OPENCLAW_LOCAL_WEBHOOK}`,
-  );
-});
+
+
