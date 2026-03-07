@@ -121,6 +121,7 @@ async function handleTelegramWebhook(req: Request, res: Response) {
      const mentions = messageText?.match(mentionRegex) ?? [];
      const hasMention = mentions.length > 0;
      if(hasMention){
+      console.log("skip response bot:" + replyToMessageFrom?.username);
       return ok(res);
      }
   }
